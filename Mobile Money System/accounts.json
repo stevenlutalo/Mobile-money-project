@@ -1,0 +1,7 @@
+{
+    "ug.a001": {"name": "Alice Nakato",   "balance": 100000},
+    "ug.a002": {"name": "Bob Mugisha",    "balance": 250000},
+    "ug.a003": {"name": "Carol Atim",     "balance": 75000},
+    "ug.a004": {"name": "David Okello",   "balance": 500000},
+    "ug.a005": {"name": "Eve Namukasa",   "balance": 30000}
+}
