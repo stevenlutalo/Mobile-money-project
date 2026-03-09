@@ -142,13 +142,14 @@ class MobileMoneyService(rpyc.Service):
             old_balance = acc["balance"]
             new_balance = old_balance + amount
             acc["balance"] = new_balance
+            acc["last_updated"] = time.time()
             _save_accounts(accounts)
 
         _log(f"[{self._node_name}] DEPOSIT  | {account_id} ({acc['name']}) | "
              f"+UGX {amount:,.0f} | {old_balance:,.0f} -> {new_balance:,.0f}")
 
         # Replicate to other nodes (fault-tolerant — won't raise on failure)
-        sync_results = sync_service.replicate(account_id, new_balance, acc["name"])
+        sync_results = sync_service.replicate(account_id, new_balance, acc["name"], acc["last_updated"])
 
         return {
             "success":      True,
@@ -193,13 +194,14 @@ class MobileMoneyService(rpyc.Service):
 
             new_balance    = old_balance - amount
             acc["balance"] = new_balance
+            acc["last_updated"] = time.time()
             _save_accounts(accounts)
 
         _log(f"[{self._node_name}] WITHDRAW | {account_id} ({acc['name']}) | "
              f"-UGX {amount:,.0f} | {old_balance:,.0f} -> {new_balance:,.0f}")
 
         # Replicate to other nodes
-        sync_results = sync_service.replicate(account_id, new_balance, acc["name"])
+        sync_results = sync_service.replicate(account_id, new_balance, acc["name"], acc["last_updated"])
 
         return {
             "success":      True,
@@ -234,7 +236,7 @@ class MobileMoneyService(rpyc.Service):
     # exposed_update_balance  — called ONLY by sync_service on remote nodes
     # ------------------------------------------------------------------
     def exposed_update_balance(self, account_id: str,
-                                new_balance: float, account_name: str) -> dict:
+                                new_balance: float, account_name: str, last_updated: float) -> dict:
         account_id = str(account_id).strip().upper()
 
         with self._lock:
@@ -242,10 +244,19 @@ class MobileMoneyService(rpyc.Service):
 
             if account_id not in accounts:
                 # Account doesn't exist locally yet — create it
-                accounts[account_id] = {"name": account_name, "balance": 0}
+                accounts[account_id] = {"name": account_name, "balance": new_balance, "last_updated": last_updated}
+                _save_accounts(accounts)
+                return {"success": True, "message": "Account created and updated."}
 
-            accounts[account_id]["balance"] = new_balance
-            _save_accounts(accounts)
+            acc = accounts[account_id]
+            if last_updated > acc.get("last_updated", 0):
+                acc["balance"] = new_balance
+                acc["name"] = account_name  # update name in case
+                acc["last_updated"] = last_updated
+                _save_accounts(accounts)
+                return {"success": True, "message": "Account updated."}
+            else:
+                return {"success": False, "message": "Update ignored (older timestamp)."}
 
         _log(f"[{self._node_name}] SYNC-IN  | {account_id} | "
              f"balance set to UGX {new_balance:,.0f}")
@@ -257,6 +268,13 @@ class MobileMoneyService(rpyc.Service):
     # ------------------------------------------------------------------
     def exposed_list_accounts(self) -> dict:
         return _load_accounts()
+
+    # ------------------------------------------------------------------
+    # exposed_sync_all  — pull and merge accounts from all other nodes
+    # ------------------------------------------------------------------
+    def exposed_sync_all(self) -> dict:
+        results = sync_service.sync_all()
+        return {"results": results}
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +307,21 @@ def main():
             "allow_pickle":       True,
         },
     )
+
+    # Start periodic sync thread
+    def periodic_sync():
+        while True:
+            time.sleep(300)  # Sync every 5 minutes
+            try:
+                print("  [PERIODIC SYNC] Starting...")
+                sync_service.sync_all()
+                print("  [PERIODIC SYNC] Completed.")
+            except Exception as e:
+                print(f"  [PERIODIC SYNC] Failed: {e}")
+
+    sync_thread = threading.Thread(target=periodic_sync, daemon=True)
+    sync_thread.start()
+
     server.start()
 
 
