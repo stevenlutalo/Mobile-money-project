@@ -21,6 +21,10 @@ from rpyc.utils.server import ThreadedServer
 
 from config import NODES, THIS_NODE
 import sync_service
+import accounts_db
+
+# Initialize database
+db_instance = accounts_db.AccountsDB()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -32,16 +36,6 @@ LOG_FILE      = os.path.join(BASE_DIR, "transactions.log")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _load_accounts() -> dict:
-    with open(ACCOUNTS_FILE, "r") as f:
-        return json.load(f)
-
-
-def _save_accounts(accounts: dict) -> None:
-    with open(ACCOUNTS_FILE, "w") as f:
-        json.dump(accounts, f, indent=4)
-
 
 def _log(message: str) -> None:
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -132,24 +126,39 @@ class MobileMoneyService(rpyc.Service):
             return {"success": False, "message": "Deposit amount must be positive."}
 
         with self._lock:
-            accounts = _load_accounts()
-
-            if account_id not in accounts:
+            acc = db_instance.get_account(account_id)
+            if not acc:
                 return {"success": False,
                         "message": f"Account {account_id} does not exist."}
 
-            acc         = accounts[account_id]
             old_balance = acc["balance"]
             new_balance = old_balance + amount
-            acc["balance"] = new_balance
-            acc["last_updated"] = time.time()
-            _save_accounts(accounts)
+
+            # Update vector clock
+            vector_clock = acc["vector_clock"].copy()
+            vector_clock[self._node_name] = time.time()
+
+            if not db_instance.update_account(account_id, acc["name"], new_balance, vector_clock):
+                return {"success": False, "message": "Conflict detected, transaction aborted."}
+
+            # Log transaction
+            db_instance.log_transaction(account_id, "deposit", amount, old_balance, new_balance, vector_clock)
 
         _log(f"[{self._node_name}] DEPOSIT  | {account_id} ({acc['name']}) | "
              f"+UGX {amount:,.0f} | {old_balance:,.0f} -> {new_balance:,.0f}")
 
         # Replicate to other nodes (fault-tolerant — won't raise on failure)
-        sync_results = sync_service.replicate(account_id, new_balance, acc["name"], acc["last_updated"])
+        sync_results = sync_service.replicate_transaction({
+            "account_id": account_id,
+            "operation": "deposit",
+            "amount": amount,
+            "old_balance": old_balance,
+            "new_balance": new_balance,
+            "name": acc["name"],
+            "vector_clock": vector_clock,
+            "timestamp": time.time(),
+            "node_id": self._node_name
+        })
 
         return {
             "success":      True,
@@ -175,13 +184,11 @@ class MobileMoneyService(rpyc.Service):
             return {"success": False, "message": "Withdrawal amount must be positive."}
 
         with self._lock:
-            accounts = _load_accounts()
-
-            if account_id not in accounts:
+            acc = db_instance.get_account(account_id)
+            if not acc:
                 return {"success": False,
                         "message": f"Account {account_id} does not exist."}
 
-            acc         = accounts[account_id]
             old_balance = acc["balance"]
 
             if amount > old_balance:
@@ -192,16 +199,33 @@ class MobileMoneyService(rpyc.Service):
                                 f"Requested: UGX {amount:,.0f}"),
                 }
 
-            new_balance    = old_balance - amount
-            acc["balance"] = new_balance
-            acc["last_updated"] = time.time()
-            _save_accounts(accounts)
+            new_balance = old_balance - amount
+
+            # Update vector clock
+            vector_clock = acc["vector_clock"].copy()
+            vector_clock[self._node_name] = time.time()
+
+            if not db_instance.update_account(account_id, acc["name"], new_balance, vector_clock):
+                return {"success": False, "message": "Conflict detected, transaction aborted."}
+
+            # Log transaction
+            db_instance.log_transaction(account_id, "withdraw", amount, old_balance, new_balance, vector_clock)
 
         _log(f"[{self._node_name}] WITHDRAW | {account_id} ({acc['name']}) | "
              f"-UGX {amount:,.0f} | {old_balance:,.0f} -> {new_balance:,.0f}")
 
         # Replicate to other nodes
-        sync_results = sync_service.replicate(account_id, new_balance, acc["name"], acc["last_updated"])
+        sync_results = sync_service.replicate_transaction({
+            "account_id": account_id,
+            "operation": "withdraw",
+            "amount": amount,
+            "old_balance": old_balance,
+            "new_balance": new_balance,
+            "name": acc["name"],
+            "vector_clock": vector_clock,
+            "timestamp": time.time(),
+            "node_id": self._node_name
+        })
 
         return {
             "success":      True,
@@ -217,13 +241,12 @@ class MobileMoneyService(rpyc.Service):
     # ------------------------------------------------------------------
     def exposed_get_balance(self, account_id: str) -> dict:
         account_id = str(account_id).strip().upper()
-        accounts   = _load_accounts()
+        acc = db_instance.get_account(account_id)
 
-        if account_id not in accounts:
+        if not acc:
             return {"success": False,
                     "message": f"Account {account_id} does not exist."}
 
-        acc = accounts[account_id]
         return {
             "success":    True,
             "account_id": account_id,
@@ -233,30 +256,17 @@ class MobileMoneyService(rpyc.Service):
         }
 
     # ------------------------------------------------------------------
-    # exposed_update_balance  — called ONLY by sync_service on remote nodes
+    # exposed_apply_transaction  — called by sync_service for replication
     # ------------------------------------------------------------------
-    def exposed_update_balance(self, account_id: str,
-                                new_balance: float, account_name: str, last_updated: float) -> dict:
-        account_id = str(account_id).strip().upper()
-
+    def exposed_apply_transaction(self, tx: dict) -> dict:
         with self._lock:
-            accounts = _load_accounts()
-
-            if account_id not in accounts:
-                # Account doesn't exist locally yet — create it
-                accounts[account_id] = {"name": account_name, "balance": new_balance, "last_updated": last_updated}
-                _save_accounts(accounts)
-                return {"success": True, "message": "Account created and updated."}
-
-            acc = accounts[account_id]
-            if last_updated > acc.get("last_updated", 0):
-                acc["balance"] = new_balance
-                acc["name"] = account_name  # update name in case
-                acc["last_updated"] = last_updated
-                _save_accounts(accounts)
-                return {"success": True, "message": "Account updated."}
+            success = db_instance.apply_transaction(tx)
+            if success:
+                _log(f"[{self._node_name}] SYNC-IN  | {tx['account_id']} | "
+                     f"balance set to UGX {tx['new_balance']:,.0f}")
+                return {"success": True, "message": "Transaction applied."}
             else:
-                return {"success": False, "message": "Update ignored (older timestamp)."}
+                return {"success": False, "message": "Transaction ignored (conflict or already applied)."}
 
         _log(f"[{self._node_name}] SYNC-IN  | {account_id} | "
              f"balance set to UGX {new_balance:,.0f}")
@@ -267,7 +277,13 @@ class MobileMoneyService(rpyc.Service):
     # exposed_list_accounts  — utility for client "list" view
     # ------------------------------------------------------------------
     def exposed_list_accounts(self) -> dict:
-        return _load_accounts()
+        return db_instance.get_all_accounts()
+
+    # ------------------------------------------------------------------
+    # exposed_get_pending_transactions  — for incremental sync
+    # ------------------------------------------------------------------
+    def exposed_get_pending_transactions(self, since: float) -> list:
+        return db_instance.get_pending_transactions(since)
 
     # ------------------------------------------------------------------
     # exposed_sync_all  — pull and merge accounts from all other nodes
