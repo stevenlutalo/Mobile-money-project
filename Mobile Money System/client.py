@@ -19,6 +19,8 @@ import sys
 import time
 import heapq
 import rpyc
+import requests
+import math
 
 from config import NODES
 
@@ -31,7 +33,7 @@ def _banner():
     print()
     print("=" * 55)
     print("  DISTRIBUTED MOBILE MONEY SYSTEM")
-    print("  Auto-Routing via Dijkstra's Algorithm")
+    print("  Auto-Routing via Geolocation Algorithm")
     print("=" * 55)
 
 
@@ -45,58 +47,84 @@ def _fmt(amount: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Geolocation helpers
+# ---------------------------------------------------------------------------
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate the great circle distance between two points
+    on the earth (specified in decimal degrees)
+    """
+    # Convert decimal degrees to radians
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+
+    # Haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    r = 6371  # Radius of earth in kilometers
+    return c * r
+
+
+def get_client_location() -> tuple[float, float] | None:
+    """
+    Get the client's approximate location using IP geolocation.
+    Returns (latitude, longitude) or None if failed.
+    """
+    try:
+        # Get public IP
+        ip_response = requests.get('https://api.ipify.org?format=json', timeout=5)
+        ip_response.raise_for_status()
+        ip = ip_response.json()['ip']
+
+        # Get location from IP
+        loc_response = requests.get(f'http://ip-api.com/json/{ip}', timeout=5)
+        loc_response.raise_for_status()
+        data = loc_response.json()
+
+        if data['status'] == 'success':
+            return data['lat'], data['lon']
+        else:
+            print(f"  [WARNING] Geolocation failed: {data.get('message', 'Unknown error')}")
+            return None
+    except Exception as e:
+        print(f"  [WARNING] Could not determine client location: {e}")
+        return None
 # Step 1 — Measure client-to-node latency
 # ---------------------------------------------------------------------------
 
-def _measure_latency(host: str, port: int, samples: int = 3) -> float | None:
+def _find_nearest_node_geo() -> tuple[str, dict] | tuple[None, None]:
     """
-    Open an rpyc connection to (host, port), send `samples` pings, and
-    return the minimum round-trip time in milliseconds.
-    Returns None if the node is unreachable.
+    Determine the nearest node based on geographical distance from client location.
+    Returns (node_key, node_cfg) or (None, None) if failed.
     """
-    try:
-        conn = rpyc.connect(
-            host, port,
-            config={"sync_request_timeout": 3},
-        )
-        times = []
-        for _ in range(samples):
-            t0 = time.perf_counter()
-            conn.root.ping()
-            times.append((time.perf_counter() - t0) * 1000.0)
-        conn.close()
-        return round(min(times), 3)
-    except Exception:
-        return None
-
-
-def _scan_client_to_nodes() -> dict:
-    """
-    Probe every node listed in config.NODES.
-    Returns: {"ug.hoi": 8.42, "ug.mba": 12.17, "ug.kam": None, ...}
-    Prints one line per node as it probes.
-    """
-    print("\n[NETWORK SCAN] Probing all nodes from this client...")
+    print("\n[GEOLOCATION] Determining client location and calculating distances...")
     _divider()
 
-    latencies = {}
+    client_loc = get_client_location()
+    if client_loc is None:
+        print("  [ERROR] Could not determine client location. Using default (Kampala).")
+        client_loc = (0.3476, 32.5825)  # Default to Kampala
+
+    client_lat, client_lon = client_loc
+    print(f"  Client location: {client_lat:.4f}, {client_lon:.4f}")
+
+    distances = {}
     for key, node_cfg in NODES.items():
-        host = node_cfg["host"]
-        port = node_cfg["port"]
-        name = node_cfg["name"]
-        loc  = node_cfg["location"]
-
-        print(f"  Probing {name} ({loc}) at {host}:{port} ...", end="  ", flush=True)
-        lat = _measure_latency(host, port)
-        latencies[key] = lat
-
-        if lat is not None:
-            print(f"{lat:.3f} ms")
-        else:
-            print("UNREACHABLE")
+        node_lat = node_cfg["lat"]
+        node_lon = node_cfg["lon"]
+        dist = haversine_distance(client_lat, client_lon, node_lat, node_lon)
+        distances[key] = dist
+        print(f"  Distance to {node_cfg['name']} ({node_cfg['location']}): {dist:.2f} km")
 
     _divider()
-    return latencies
+
+    if not distances:
+        return None, None
+
+    best_key = min(distances, key=lambda k: distances[k])
+    return best_key, NODES[best_key]
 
 
 # ---------------------------------------------------------------------------
@@ -315,31 +343,21 @@ def _select_nearest_node(client_latencies: dict,
 
 def auto_connect() -> tuple:
     """
-    Full Dijkstra routing pipeline.
-    Scans nodes, fetches topology, runs Dijkstra, connects to nearest node.
+    Geolocation-based routing pipeline.
+    Determines client location, calculates distances, connects to nearest node.
     Returns (rpyc_conn, node_cfg_dict) or (None, None) on total failure.
     """
-    client_latencies = _scan_client_to_nodes()
-
-    if all(v is None for v in client_latencies.values()):
-        print("  [ERROR] All nodes are unreachable. Is the network up?")
-        return None, None
-
-    nbr_latencies = _fetch_neighbour_latencies(client_latencies)
-
-    best_key, node_cfg = _select_nearest_node(client_latencies, nbr_latencies)
+    best_key, node_cfg = _find_nearest_node_geo()
 
     if best_key is None:
-        print("  [ERROR] Dijkstra found no reachable node.")
+        print("  [ERROR] Could not determine nearest node.")
         return None, None
 
     name = node_cfg["name"]
     host = node_cfg["host"]
     port = node_cfg["port"]
-    lat  = client_latencies.get(best_key)
-    lat_str = f"{lat:.3f} ms" if lat is not None else "via relay"
 
-    print(f"\n[DECISION]  Nearest node: {name}  ({lat_str} total latency)")
+    print(f"\n[DECISION]  Nearest node: {name}")
     print(f"            Connecting to {name} ({host}:{port})...", end="  ", flush=True)
 
     try:

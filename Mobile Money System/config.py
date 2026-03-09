@@ -18,6 +18,8 @@ NODE_HOI = {
     "location": "Hoima",
     "host":     "10.127.237.68",   # <-- Change to PC 1's actual IP address
     "port":     18861,
+    "lat":      1.4319,  # Latitude
+    "lon":      31.3436, # Longitude
 }
 
 NODE_MBA = {
@@ -25,6 +27,8 @@ NODE_MBA = {
     "location": "Mbarara",
     "host":     "10.127.237.123",   # <-- Change to PC 2's actual IP address
     "port":     18861,
+    "lat":      -0.6072, # Latitude
+    "lon":      30.6545, # Longitude
 }
 
 NODE_KAM = {
@@ -32,6 +36,8 @@ NODE_KAM = {
     "location": "Kampala",
     "host":     "10.127.237.38",   # <-- Change to PC 3's actual IP address
     "port":     18861,
+    "lat":      0.3476,  # Latitude
+    "lon":      32.5825, # Longitude
 }
 
 # All nodes indexed by key.
