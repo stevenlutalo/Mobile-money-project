@@ -16,6 +16,7 @@ import os
 import threading
 import datetime
 import time
+import socket
 import rpyc
 from rpyc.utils.server import ThreadedServer
 
@@ -323,6 +324,9 @@ def main():
             "allow_pickle":       True,
         },
     )
+    
+    # Enable SO_REUSEADDR to allow quick restarts
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     # Start periodic sync thread
     def periodic_sync():
