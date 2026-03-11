@@ -1,0 +1,113 @@
+version: "3.8"
+
+services:
+  # etcd — distributed configuration and service discovery
+  # Stores cluster membership, node health, and configuration
+  etcd:
+    image: bitnami/etcd:3.5
+    container_name: mmoney-etcd
+    environment:
+      # Set a single-node etcd cluster (no replication across containers)
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd:2379"
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+      ETCD_LISTEN_PEER_URLS: "http://0.0.0.0:2380"
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://etcd:2380"
+      ETCD_INITIAL_CLUSTER: "default=http://etcd:2380"
+      ETCD_INITIAL_CLUSTER_STATE: "new"
+      ETCD_INITIAL_CLUSTER_TOKEN: "mmoney"
+      ETCD_DATA_DIR: "/etcd-data"
+    ports:
+      - "2379:2379"  # Client API
+      - "2380:2380"  # Peer communication
+    volumes:
+      - etcd-data:/etcd-data
+    networks:
+      - mmoney-network
+
+  # Node 1 — first replica
+  node-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mmoney-node-1
+    environment:
+      NODE_ID: "node-1"
+      NODE_PORT: "18861"
+      ETCD_HOST: "etcd"
+      ETCD_PORT: "2379"
+      CLUSTER_NAME: "mmoney-cluster"
+      LOG_LEVEL: "INFO"
+      MMONEY_LAT: "51.5"
+      MMONEY_LON: "-0.1"
+    ports:
+      - "18861:18861"
+    depends_on:
+      - etcd
+    volumes:
+      - node1-data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - mmoney-network
+    command: python services/node_server.py
+
+  # Node 2 — second replica
+  node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mmoney-node-2
+    environment:
+      NODE_ID: "node-2"
+      NODE_PORT: "18862"
+      ETCD_HOST: "etcd"
+      ETCD_PORT: "2379"
+      CLUSTER_NAME: "mmoney-cluster"
+      LOG_LEVEL: "INFO"
+      MMONEY_LAT: "48.8"
+      MMONEY_LON: "2.3"
+    ports:
+      - "18862:18862"
+    depends_on:
+      - etcd
+    volumes:
+      - node2-data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - mmoney-network
+    command: python services/node_server.py
+
+  # Node 3 — third replica
+  node-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mmoney-node-3
+    environment:
+      NODE_ID: "node-3"
+      NODE_PORT: "18863"
+      ETCD_HOST: "etcd"
+      ETCD_PORT: "2379"
+      CLUSTER_NAME: "mmoney-cluster"
+      LOG_LEVEL: "INFO"
+      MMONEY_LAT: "52.5"
+      MMONEY_LON: "13.4"
+    ports:
+      - "18863:18863"
+    depends_on:
+      - etcd
+    volumes:
+      - node3-data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - mmoney-network
+    command: python services/node_server.py
+
+volumes:
+  etcd-data:
+  node1-data:
+  node2-data:
+  node3-data:
+
+networks:
+  mmoney-network:
+    driver: bridge

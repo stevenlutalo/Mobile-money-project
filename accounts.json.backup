@@ -1,7 +1,0 @@
-{
-    "ug.a001": {"name": "Alice Nakato",   "balance": 100000, "last_updated": 1709923200.0},
-    "ug.a002": {"name": "Bob Mugisha",    "balance": 250000, "last_updated": 1709923200.0},
-    "ug.a003": {"name": "Carol Atim",     "balance": 75000, "last_updated": 1709923200.0},
-    "ug.a004": {"name": "David Okello",   "balance": 500000, "last_updated": 1709923200.0},
-    "ug.a005": {"name": "Eve Namukasa",   "balance": 30000, "last_updated": 1709923200.0}
-}

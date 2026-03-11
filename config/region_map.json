@@ -1,0 +1,23 @@
+{
+  "regions": [
+    {
+      "region_code": "EU",
+      "description": "Europe (Frankfurt)",
+      "reference_lat": 50.1109,
+      "reference_lon": 8.6821
+    },
+    {
+      "region_code": "AF",
+      "description": "Africa (Johannesburg)",
+      "reference_lat": -26.2023,
+      "reference_lon": 28.0436
+    },
+    {
+      "region_code": "AS",
+      "description": "Asia (Singapore)",
+      "reference_lat": 1.3521,
+      "reference_lon": 103.8198
+    }
+  ],
+  "note": "Used by client for geographic ordering of servers in discovery. Add regions as you expand globally."
+}

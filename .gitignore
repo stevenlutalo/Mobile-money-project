@@ -1,48 +1,47 @@
+.gitignore
+
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.egg
-*.egg-info/
+*.pyc
+*.pyo
+*.pyd
+.Python
 dist/
 build/
-.Python
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+*.egg-info/
+.eggs/
 
-# Virtual Environments
+# Virtual environments
 venv/
 env/
 ENV/
-.venv
 
 # IDE
 .vscode/
-.vscode-oss/
 .idea/
 *.swp
 *.swo
-*~
-.DS_Store
 
-# Project-specific
-accounts.db
-accounts.db-shm
-accounts.db-wal
-transactions.log
-*.log
+# Local configuration
 .env
+.env.local
 
-# OS
-Thumbs.db
+# Database & logs
+data/
+logs/
+*.db
+*.log
+*.audit
+
+# macOS
 .DS_Store
+.AppleDouble
+
+# Certificates
+certs/*.key
+certs/ca.srl
+certs/node-*/
+
+# Docker
+docker-compose.override.yml
+.dockerignore

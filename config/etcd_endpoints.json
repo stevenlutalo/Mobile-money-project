@@ -1,0 +1,10 @@
+{
+  "cluster_name": "mmoney-cluster",
+  "etcd_endpoints": [
+    {
+      "host": "localhost",
+      "port": 2379
+    }
+  ],
+  "description": "Default etcd endpoint for local development. Update this if etcd is on a different machine."
+}
