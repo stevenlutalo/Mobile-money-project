@@ -610,9 +610,11 @@ class NearestServerDiscovery:
         (e.g. result["balance"]) will fail with "stream has been closed".
         """
         if isinstance(value, dict):
+            # Avoid attribute access like value.items() on netref dicts because
+            # stricter RPyC protocol configs can reject it ("cannot access 'items'").
             return {
-                self._detach_rpc_result(k): self._detach_rpc_result(v)
-                for k, v in value.items()
+                self._detach_rpc_result(k): self._detach_rpc_result(value[k])
+                for k in value
             }
         if isinstance(value, list):
             return [self._detach_rpc_result(v) for v in value]
