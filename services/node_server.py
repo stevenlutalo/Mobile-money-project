@@ -252,17 +252,18 @@ class SecureNodeService(rpyc.Service):
         """
         self.gossip_service.receive_full_state(payload)
 
-    def exposed_get_neighbour_latencies(self) -> dict:
+    def exposed_get_neighbour_latencies(self) -> str:
         """
         Return measured RTT (round-trip time) to all other servers in the cluster.
+        Returned as JSON string (easier for RPyC serialization).
         Used by clients for server discovery (Phase 3).
 
         Returns:
-            Dict of {node_id: rtt_ms, ...}
+            JSON string of {node_id: rtt_ms, ...}
         """
         # In a real implementation, we'd measure actual RTTs.
-        # For now, return empty dict (clients measure via TCP ping).
-        return {}
+        # For now, return empty dict as JSON (clients measure via TCP ping).
+        return "{}"
 
     def exposed_promote_to_primary(self, failed_node_id: str) -> None:
         """

@@ -434,7 +434,9 @@ class NearestServerDiscovery:
         # Query primary for its known latencies
         try:
             conn = rpyc.connect(primary["ip"], primary["port"])
-            neighbor_latencies = conn.root.get_neighbour_latencies()
+            # Server returns JSON string (for RPyC serialization compatibility)
+            neighbor_latencies_json = conn.root.get_neighbour_latencies()
+            neighbor_latencies = json.loads(neighbor_latencies_json)
 
             for node_id, rtt in neighbor_latencies.items():
                 if "neighbor_nodes" not in graph:
@@ -443,7 +445,8 @@ class NearestServerDiscovery:
 
             conn.close()
         except Exception as e:
-            log.warning(f"Failed to query primary for topology: {e}")
+            # Gracefully handle if topology query fails (usually returns empty dict anyway)
+            log.debug(f"Failed to query primary for topology: {e}")
 
         return graph
 
