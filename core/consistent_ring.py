@@ -2,6 +2,7 @@
 import hashlib
 import logging
 import threading
+import time
 from typing import List, Dict, Optional
 
 # — Third-party packages —
@@ -82,21 +83,31 @@ class NodeRing:
         self._sync_ring_from_etcd()
 
     def _connect_etcd(self) -> None:
-        """Establish connection to etcd cluster."""
-        try:
-            self.etcd = etcd3.client(
-                host=self.etcd_host,
-                port=self.etcd_port,
-                timeout=5,
-            )
-            # Test the connection
-            self.etcd.status()
-            log.info(f"Connected to etcd at {self.etcd_host}:{self.etcd_port}")
-        except Exception as e:
-            raise DiscoveryError(
-                f"Failed to connect to etcd at {self.etcd_host}:{self.etcd_port}: {e}. "
-                f"Is etcd running?"
-            )
+        """Establish connection to etcd cluster with exponential backoff retry."""
+        max_retries = 15
+        base_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                self.etcd = etcd3.client(
+                    host=self.etcd_host,
+                    port=self.etcd_port,
+                    timeout=5,
+                )
+                # Test the connection
+                self.etcd.status()
+                log.info(f"Connected to etcd at {self.etcd_host}:{self.etcd_port}")
+                return
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise DiscoveryError(
+                        f"Failed to connect to etcd at {self.etcd_host}:{self.etcd_port} after {max_retries} attempts: {e}. "
+                        f"Is etcd running?"
+                    )
+                # Exponential backoff: 0.5s, 1s, 2s, 4s, etc., max 10s
+                delay = min(base_delay * (2 ** attempt), 10)
+                log.warning(f"etcd connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {delay:.1f}s...")
+                time.sleep(delay)
 
     def _hash_point(self, key: str) -> int:
         """
