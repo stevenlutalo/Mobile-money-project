@@ -270,6 +270,10 @@ class NodeRing:
                 if value:
                     node_id = metadata.key.decode().split("/")[-1]
                     node_info = json_decode(value.decode())
+                    # Ensure node_id is always present in the dict
+                    # (it's stored in the etcd key, but we need it in the value too)
+                    if "node_id" not in node_info:
+                        node_info["node_id"] = node_id
                     self.nodes[node_id] = node_info
 
                     # Add virtual nodes to ring
