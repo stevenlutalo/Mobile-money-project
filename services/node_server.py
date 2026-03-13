@@ -225,6 +225,58 @@ class SecureNodeService(rpyc.Service):
             "to_balance": to_acc.balance(),
         }
 
+    def exposed_deposit(self, token: str, account_id: str, amount: float) -> dict:
+        """
+        Deposit money into an account.
+
+        Args:
+            token: JWT token
+            account_id: Destination account ID
+            amount: Amount to deposit
+
+        Returns:
+            Dict of {"status": "ok", "balance": ...}
+        """
+        self._verify_token(token)
+        return self._route_to_owner_or_local(
+            account_id,
+            "exposed_deposit_local",
+            token,
+            account_id,
+            amount,
+            fallback=lambda: self.exposed_deposit_local(token, account_id, amount),
+        )
+
+    def exposed_deposit_local(self, token: str, account_id: str, amount: float) -> dict:
+        """Deposit locally without owner routing (used for forwarded calls)."""
+        claims = self._verify_token(token)
+        user_id = claims["sub"]
+
+        if amount <= 0:
+            raise InvalidRequest("Deposit amount must be greater than zero")
+
+        account = self.store.get(account_id)
+        if account is None:
+            account = PNCounter(NODE_ID)
+
+        account.credit(amount)
+        self.store.put(account_id, account)
+
+        self.audit_log.append(
+            account_id,
+            "credit",
+            amount,
+            "Cash deposit",
+            user_id,
+        )
+
+        log.info(f"Deposit: account={account_id}, amount={amount}")
+
+        return {
+            "status": "ok",
+            "balance": account.balance(),
+        }
+
     def exposed_create_account(
         self,
         token: str,

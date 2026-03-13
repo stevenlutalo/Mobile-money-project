@@ -714,9 +714,10 @@ def show_menu():
     print("══════════════════════════════════════════════")
     print("  [1] Check my balance")
     print("  [2] Send money")
-    print("  [3] View transaction history")
-    print("  [4] View server status")
-    print("  [5] Exit")
+    print("  [3] Deposit money")
+    print("  [4] View transaction history")
+    print("  [5] View server status")
+    print("  [6] Exit")
     print("══════════════════════════════════════════════\n")
 
 
@@ -751,7 +752,7 @@ def main_interactive(discovery, token: str, username: str, account_id: str):
 
     while True:
         show_menu()
-        choice = input("Enter option (1-5): ").strip()
+        choice = input("Enter option (1-6): ").strip()
 
         if choice == "1":
             # Check balance
@@ -792,6 +793,31 @@ def main_interactive(discovery, token: str, username: str, account_id: str):
                 print(f"✗ Error: {e}\n")
 
         elif choice == "3":
+            # Deposit money
+            try:
+                amount_str = input("Amount to deposit: ").strip()
+
+                try:
+                    amount = float(amount_str)
+                except ValueError:
+                    print("✗ Invalid amount. Please enter a number (e.g. 5000).\n")
+                    continue
+
+                confirm = input(f"Deposit UGX {amount:,.2f} to {account_id}? [y/n]: ").strip().lower()
+                if confirm != "y":
+                    print("✗ Cancelled\n")
+                    continue
+
+                result = discovery.execute_with_fallback(
+                    lambda conn: conn.root.exposed_deposit(token, account_id, amount)
+                )
+
+                print(f"✓ Deposit complete. Your new balance: UGX {result['balance']:,.2f}\n")
+
+            except Exception as e:
+                print(f"✗ Error: {e}\n")
+
+        elif choice == "4":
             # Transaction history
             try:
                 result = discovery.execute_with_fallback(
@@ -804,11 +830,11 @@ def main_interactive(discovery, token: str, username: str, account_id: str):
             except Exception as e:
                 print(f"✗ Error: {e}\n")
 
-        elif choice == "4":
+        elif choice == "5":
             # Server status
             show_server_status(discovery)
 
-        elif choice == "5":
+        elif choice == "6":
             print("✓ Goodbye!\n")
             sys.exit(0)
 
