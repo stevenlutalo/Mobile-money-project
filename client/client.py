@@ -433,7 +433,7 @@ class NearestServerDiscovery:
 
         # Query primary for its known latencies
         try:
-            conn = rpyc.connect(primary["ip"], primary["port"], timeout=5)
+            conn = rpyc.connect(primary["ip"], primary["port"])
             neighbor_latencies = conn.root.get_neighbour_latencies()
 
             for node_id, rtt in neighbor_latencies.items():
@@ -620,7 +620,7 @@ class NearestServerDiscovery:
         for attempt, server in enumerate(self.routes + [self.primary]):
             try:
                 t0 = time.perf_counter()
-                conn = rpyc.connect(server["ip"], server["port"], timeout=5)
+                conn = rpyc.connect(server["ip"], server["port"])
                 result = rpc_callable(conn)
                 rtt = (time.perf_counter() - t0) * 1000
 
