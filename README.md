@@ -56,7 +56,7 @@ pip install -r requirements.txt
 This installs:
 - **rpyc**: Remote procedure calls (client→server, server→server)
 - **etcd3**: Cluster membership tracking
-- **plyvel**: Embedded LevelDB for account storage
+- **sqlite3**: Embedded database for account storage (built-in to Python)
 - **PyJWT** & **cryptography**: Login tokens and TLS
 
 ### Step 2: Start etcd

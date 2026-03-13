@@ -1,10 +1,11 @@
 # — Standard library —
 import json
 import logging
+import sqlite3
 from typing import List, Optional
 
 # — Third-party packages —
-import plyvel
+# (none)
 
 # — This project —
 from core.crdt import PNCounter
@@ -13,19 +14,19 @@ from core.exceptions import StorageError
 log = logging.getLogger(__name__)
 
 
-# LevelDB — an embedded key-value database (like a very fast dictionary
-# that survives restarts). No separate database server needed.
+# SQLite — an embedded relational database (built-in to Python, no compilation needed).
+# Replaces plyvel/LevelDB for Windows compatibility.
 # Keys = account IDs (strings). Values = CRDT state (JSON).
 
 
 class ShardStore:
     """
-    Embedded database for storing account balances using LevelDB.
+    Embedded database for storing account balances using SQLite.
     Each server manages a subset of all accounts (its shard).
 
     Why it exists: accounts must persist across server restarts and
-    process failures. LevelDB provides fast, reliable storage without
-    requiring a separate database server.
+    process failures. SQLite provides fast, reliable storage without
+    requiring a separate database server and compiles on all platforms.
 
     Usage:
       store = ShardStore(db_path="data/node-1.db")
@@ -36,10 +37,10 @@ class ShardStore:
 
     def __init__(self, db_path: str = "data/shard.db", node_id: str = "node-1"):
         """
-        Initialize or open an existing LevelDB database.
+        Initialize or open an existing SQLite database.
 
         Args:
-            db_path: Path to the database directory
+            db_path: Path to the database file
             node_id: This server's ID (for CRDT initialization)
         """
         self.db_path = db_path
@@ -47,7 +48,16 @@ class ShardStore:
         self._deltas = {}  # Track changes since last get_delta()
 
         try:
-            self.db = plyvel.DB(db_path, create_if_missing=True)
+            self.db = sqlite3.connect(db_path, check_same_thread=False)
+            self.db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+                """
+            )
+            self.db.commit()
             log.info(f"Opened database at {db_path}")
         except Exception as e:
             raise StorageError(f"Failed to open database at {db_path}: {e}")
@@ -65,11 +75,13 @@ class ShardStore:
             PNCounter instance, or None if not found
         """
         try:
-            key = account_id.encode()
-            value = self.db.get(key)
-            if value is None:
+            cursor = self.db.execute(
+                "SELECT data FROM accounts WHERE id = ?", (account_id,)
+            )
+            row = cursor.fetchone()
+            if row is None:
                 return None
-            return PNCounter.from_json(self.node_id, value.decode())
+            return PNCounter.from_json(self.node_id, row[0])
         except Exception as e:
             log.error(f"Failed to get account {account_id}: {e}")
             raise StorageError(f"Failed to read account {account_id}: {e}")
@@ -85,9 +97,12 @@ class ShardStore:
             counter: PNCounter with the new balance
         """
         try:
-            key = account_id.encode()
-            value = counter.to_json().encode()
-            self.db.put(key, value)
+            value = counter.to_json()
+            self.db.execute(
+                "INSERT OR REPLACE INTO accounts (id, data) VALUES (?, ?)",
+                (account_id, value)
+            )
+            self.db.commit()
             # Mark as changed for delta gossip
             self._deltas[account_id] = counter.get_delta()
             log.debug(f"Stored account {account_id}, balance={counter.balance()}")
@@ -104,11 +119,13 @@ class ShardStore:
             accounts: Dict of {account_id: PNCounter, ...}
         """
         try:
-            with self.db.write_batch() as batch:
+            with self.db:
                 for account_id, counter in accounts.items():
-                    key = account_id.encode()
-                    value = counter.to_json().encode()
-                    batch.put(key, value)
+                    value = counter.to_json()
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO accounts (id, data) VALUES (?, ?)",
+                        (account_id, value)
+                    )
                     self._deltas[account_id] = counter.get_delta()
             log.debug(f"Batch stored {len(accounts)} accounts")
         except Exception as e:
@@ -125,8 +142,8 @@ class ShardStore:
             account_id: The account to delete
         """
         try:
-            key = account_id.encode()
-            self.db.delete(key)
+            self.db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+            self.db.commit()
             log.info(f"Deleted account {account_id}")
         except Exception as e:
             log.error(f"Failed to delete account {account_id}: {e}")
@@ -140,9 +157,8 @@ class ShardStore:
             List of account ID strings
         """
         try:
-            accounts = []
-            for key, _ in self.db.iterator():
-                accounts.append(key.decode())
+            cursor = self.db.execute("SELECT id FROM accounts")
+            accounts = [row[0] for row in cursor.fetchall()]
             return accounts
         except Exception as e:
             log.error(f"Failed to list accounts: {e}")

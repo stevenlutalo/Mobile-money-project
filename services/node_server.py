@@ -46,6 +46,7 @@ load_dotenv()
 # — Configuration constants —
 NODE_ID = os.environ.get("NODE_ID", "node-1")
 NODE_PORT = int(os.environ.get("NODE_PORT", 18861))
+NODE_HOST = os.environ.get("NODE_HOST", "localhost")  # Hostname for inter-node communication
 ETCD_HOST = os.environ.get("ETCD_HOST", "localhost")
 ETCD_PORT = int(os.environ.get("ETCD_PORT", 2379))
 CLUSTER_NAME = os.environ.get("CLUSTER_NAME", "mmoney-cluster")
@@ -349,7 +350,7 @@ def main():
         # 6. Register this node in the ring
         node_info = {
             "node_id": NODE_ID,
-            "ip": "127.0.0.1",  # In production: detect public IP
+            "ip": NODE_HOST,  # Use configured hostname/IP
             "port": NODE_PORT,
         }
         ring.register_node(NODE_ID, node_info)

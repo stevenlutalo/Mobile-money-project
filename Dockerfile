@@ -5,19 +5,14 @@ FROM python:3.11-slim
 # Set working directory inside the container
 WORKDIR /app
 
-# Install system dependencies needed for LevelDB (plyvel)
-# build-essential: C compiler for compiling plyvel from source
-# libsnappy-dev: compression library for LevelDB
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libsnappy-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy project files into the container
 COPY . /app
 
+# Set Python path so modules can be imported from /app
+ENV PYTHONPATH=/app
+
 # Install Python dependencies
-# This installs all packages from requirements.txt (rpyc, etcd3, plyvel, etc.)
+# This installs all packages from requirements.txt (rpyc, etcd3, PyJWT, cryptography, etc.)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose the default node port (clients and other nodes connect here)

@@ -42,9 +42,8 @@ def run_heartbeat(ring, node_id: str) -> None:
     while True:
         try:
             etcd_key = f"/{ring.cluster_name}/heartbeat/{node_id}"
-            # Lease: auto-delete key if not renewed for HEARTBEAT_TIMEOUT_SECS seconds
-            lease = ring.etcd.Grant(ttl=HEARTBEAT_TIMEOUT_SECS)
-            ring.etcd.put(etcd_key, str(time.time()), lease=lease.id)
+            # Simple heartbeat: just update timestamp
+            ring.etcd.put(etcd_key, str(time.time()))
             log.debug(f"Sent heartbeat for {node_id}")
             time.sleep(HEARTBEAT_INTERVAL_SECS)
         except Exception as e:
@@ -80,15 +79,31 @@ def watch_ring(ring) -> None:
     while True:
         try:
             etcd_prefix = f"/{ring.cluster_name}/heartbeat/"
-            seen_nodes = set()
+            current_time = time.time()
+            live_nodes = set()
 
+            # Check all heartbeat entries in etcd
             for value, metadata in ring.etcd.get_prefix(etcd_prefix):
-                node_id = metadata.key.decode().split("/")[-1]
-                seen_nodes.add(node_id)
+                try:
+                    node_id = metadata.key.decode().split("/")[-1]
+                    heartbeat_time = float(value.decode())
+                    
+                    # Only consider nodes with recent heartbeats as live
+                    if current_time - heartbeat_time <= HEARTBEAT_TIMEOUT_SECS:
+                        live_nodes.add(node_id)
+                    else:
+                        # Stale heartbeat - mark node as down
+                        log.warning(f"Stale heartbeat for {node_id}: "
+                                   f"{current_time - heartbeat_time:.1f}s old (timeout: {HEARTBEAT_TIMEOUT_SECS}s)")
+                        on_node_down(node_id, ring)
+                        
+                except (ValueError, AttributeError) as e:
+                    log.debug(f"Failed to parse heartbeat: {e}")
+                    continue
 
-            # Check for nodes that disappeared
+            # Check for nodes registered but missing heartbeats
             current_nodes = set(ring.nodes.keys())
-            for dead_node in current_nodes - seen_nodes:
+            for dead_node in current_nodes - live_nodes:
                 on_node_down(dead_node, ring)
 
             time.sleep(HEARTBEAT_INTERVAL_SECS)

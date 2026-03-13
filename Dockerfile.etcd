@@ -1,0 +1,27 @@
+# Download and run pre-built etcd binary
+FROM alpine:3.18
+
+RUN apk add --no-cache ca-certificates curl tar gzip
+
+WORKDIR /tmp
+
+# Download etcd v3.5.13 for Linux x86_64
+RUN curl -sL https://github.com/etcd-io/etcd/releases/download/v3.5.13/etcd-v3.5.13-linux-amd64.tar.gz -o etcd.tar.gz && \
+    tar xzf etcd.tar.gz && \
+    cp etcd-v3.5.13-linux-amd64/etcd /usr/local/bin/ && \
+    cp etcd-v3.5.13-linux-amd64/etcdctl /usr/local/bin/ && \
+    chmod +x /usr/local/bin/etcd /usr/local/bin/etcdctl && \
+    rm -rf etcd.tar.gz etcd-v3.5.13-linux-amd64
+
+EXPOSE 2379 2380
+
+ENV ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379
+ENV ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+ENV ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+ENV ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+ENV ETCD_INITIAL_CLUSTER=default=http://etcd:2380
+ENV ETCD_INITIAL_CLUSTER_STATE=new
+ENV ETCD_INITIAL_CLUSTER_TOKEN=mmoney
+ENV ETCD_DATA_DIR=/etcd-data
+
+ENTRYPOINT ["etcd"]

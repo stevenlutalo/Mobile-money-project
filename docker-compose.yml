@@ -1,10 +1,10 @@
-version: "3.8"
-
 services:
   # etcd — distributed configuration and service discovery
   # Stores cluster membership, node health, and configuration
   etcd:
-    image: bitnami/etcd:3.5
+    build:
+      context: .
+      dockerfile: Dockerfile.etcd
     container_name: mmoney-etcd
     environment:
       # Set a single-node etcd cluster (no replication across containers)
@@ -33,6 +33,7 @@ services:
     environment:
       NODE_ID: "node-1"
       NODE_PORT: "18861"
+      NODE_HOST: "node-1"
       ETCD_HOST: "etcd"
       ETCD_PORT: "2379"
       CLUSTER_NAME: "mmoney-cluster"
@@ -59,6 +60,7 @@ services:
     environment:
       NODE_ID: "node-2"
       NODE_PORT: "18862"
+      NODE_HOST: "node-2"
       ETCD_HOST: "etcd"
       ETCD_PORT: "2379"
       CLUSTER_NAME: "mmoney-cluster"
@@ -85,6 +87,7 @@ services:
     environment:
       NODE_ID: "node-3"
       NODE_PORT: "18863"
+      NODE_HOST: "node-3"
       ETCD_HOST: "etcd"
       ETCD_PORT: "2379"
       CLUSTER_NAME: "mmoney-cluster"
@@ -101,6 +104,29 @@ services:
     networks:
       - mmoney-network
     command: python services/node_server.py
+
+  # Client — for testing the system
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mmoney-client
+    environment:
+      LOG_LEVEL: "INFO"
+      ETCD_HOST: "etcd"
+      ETCD_PORT: "2379"
+      CLUSTER_NAME: "mmoney-cluster"
+    stdin_open: true
+    tty: true
+    depends_on:
+      - node-1
+      - node-2
+      - node-3
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - mmoney-network
+    command: python client/client.py
 
 volumes:
   etcd-data:
