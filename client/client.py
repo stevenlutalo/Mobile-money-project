@@ -496,19 +496,27 @@ class NearestServerDiscovery:
 
         Args:
             graph: Network topology
-            src: Source node
-            dst: Destination node
+            src: Source node (usually "CLIENT")
+            dst: Destination node (node_id like "node-1")
             k: Number of paths to find
 
         Returns:
-            List of {"path": [node_ids], "cost": distance}, sorted by cost
+            List of server dicts [{"node_id": ..., "ip": ..., "port": ...}, ...], sorted by cost
         """
-        # Simplified: for now, return just the primary node K times
-        # A full implementation would run Yen's algorithm
-        return [
-            {"path": [src, dst], "cost": graph.get("CLIENT", {}).get(dst, float("inf"))}
-            for _ in range(k)
-        ]
+        # Simplified: for now, return the destination server K times
+        # Extract server from candidates by node_id
+        dest_server = None
+        for candidate in self.candidates:
+            if candidate.get("node_id") == dst:
+                dest_server = candidate
+                break
+        
+        if not dest_server:
+            # Fallback: create minimal server dict if not found in candidates
+            dest_server = {"node_id": dst, "ip": dst, "port": 18861}
+        
+        # Return K copies of the destination server (simplified Yen's algorithm)
+        return [dest_server for _ in range(k)]
 
     # ────────────────────────────────────────────────────────────────
     # Phase 4: ADAPTIVE RE-ROUTING
