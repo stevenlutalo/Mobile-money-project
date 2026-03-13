@@ -100,7 +100,12 @@ class SecureNodeService(rpyc.Service):
 
     def on_connect(self, conn):
         """Called when a client connects."""
-        log.debug(f"Client connected: {conn.client_address}")
+        try:
+            # Try to get peer address from the underlying socket
+            peer_addr = conn._channel.stream.sock.getpeername()
+            log.debug(f"Client connected: {peer_addr}")
+        except (AttributeError, TypeError):
+            log.debug("Client connected")
 
     def exposed_get_balance(self, token: str, account_id: str) -> float:
         """

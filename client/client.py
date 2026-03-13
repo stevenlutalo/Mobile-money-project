@@ -671,7 +671,7 @@ class NearestServerDiscovery:
             )
 
             # Start background reprobe thread
-            reprobe = threading.Thread(self._background_reprobe, daemon=True)
+            reprobe = threading.Thread(target=self._background_reprobe, daemon=True)
             reprobe.start()
 
             return self.primary
