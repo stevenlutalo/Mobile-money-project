@@ -87,6 +87,10 @@ def setup_logging():
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
 
+    # Reduce low-value socket chatter from the RPC transport layer.
+    logging.getLogger(f"SECURENODE/{NODE_PORT}").setLevel(logging.WARNING)
+    logging.getLogger("rpyc").setLevel(logging.WARNING)
+
     log.info(f"Logging configured: level={LOG_LEVEL}, file={log_file}")
 
 
@@ -217,7 +221,15 @@ class SecureNodeService(rpyc.Service):
             user_id
         )
 
-        log.info(f"Transfer: {from_account} -> {to_account}, amount={amount}")
+        log.info(
+            "Transfer applied: from=%s to=%s amount=%.2f new_from=%.2f new_to=%.2f user=%s",
+            from_account,
+            to_account,
+            amount,
+            from_acc.balance(),
+            to_acc.balance(),
+            user_id,
+        )
 
         return {
             "status": "ok",
@@ -270,7 +282,13 @@ class SecureNodeService(rpyc.Service):
             user_id,
         )
 
-        log.info(f"Deposit: account={account_id}, amount={amount}")
+        log.info(
+            "Deposit applied: account=%s amount=%.2f new_balance=%.2f user=%s",
+            account_id,
+            amount,
+            account.balance(),
+            user_id,
+        )
 
         return {
             "status": "ok",
@@ -326,7 +344,12 @@ class SecureNodeService(rpyc.Service):
             user_id
         )
 
-        log.info(f"Created account {account_id} with balance={account.balance()}")
+        log.info(
+            "Account created: account=%s initial_balance=%.2f user=%s",
+            account_id,
+            account.balance(),
+            user_id,
+        )
 
         return {
             "status": "ok",
@@ -414,16 +437,31 @@ class SecureNodeService(rpyc.Service):
         owner_id = owner.get("node_id")
 
         if owner_id == NODE_ID:
+            log.debug("Routing decision: account=%s method=%s owner=%s (local)", account_id, method_name, owner_id)
             return fallback()
 
         conn = None
         try:
+            log.debug(
+                "Routing decision: account=%s method=%s owner=%s (%s:%s)",
+                account_id,
+                method_name,
+                owner_id,
+                owner.get("ip"),
+                owner.get("port"),
+            )
             conn = rpyc.connect(owner["ip"], owner["port"])
             remote_method = getattr(conn.root, method_name)
-            return remote_method(*args)
+            result = remote_method(*args)
+            log.info("Owner route succeeded: account=%s method=%s owner=%s", account_id, method_name, owner_id)
+            return result
         except Exception as e:
             log.warning(
-                f"Owner routing failed for account {account_id} to {owner_id}: {e}. Falling back to local."
+                "Owner route failed: account=%s method=%s owner=%s error=%s. Falling back to local.",
+                account_id,
+                method_name,
+                owner_id,
+                e,
             )
             return fallback()
         finally:
@@ -531,11 +569,6 @@ def main():
         log.error(f"Fatal error: {e}", exc_info=True)
         print(f"\n✗ Error: {e}\n")
         sys.exit(1)
-
-
-# Missing exception class (should be in core/exceptions.py)
-class InvalidRequest(Exception):
-    pass
 
 
 if __name__ == "__main__":

@@ -44,10 +44,10 @@ def run_heartbeat(ring, node_id: str) -> None:
             etcd_key = f"/{ring.cluster_name}/heartbeat/{node_id}"
             # Simple heartbeat: just update timestamp
             ring.etcd.put(etcd_key, str(time.time()))
-            log.debug(f"Sent heartbeat for {node_id}")
+            log.debug("event=heartbeat_put node=%s key=%s", node_id, etcd_key)
             time.sleep(HEARTBEAT_INTERVAL_SECS)
         except Exception as e:
-            log.warning(f"Heartbeat failed: {e}. Retrying...")
+            log.warning("event=heartbeat_put_failed node=%s error=%s retry_in=5s", node_id, e)
             time.sleep(5)
 
 
@@ -60,12 +60,12 @@ def on_node_down(node_id: str, ring) -> None:
         node_id: ID of the node that went down
         ring: NodeRing instance
     """
-    log.warning(f"Node {node_id} is down. Removing from ring...")
+    log.warning("event=node_down_detected node=%s action=deregister", node_id)
     try:
         ring.deregister_node(node_id)
-        log.info(f"Removed {node_id} from cluster")
+        log.info("event=node_deregistered node=%s", node_id)
     except Exception as e:
-        log.error(f"Failed to deregister {node_id}: {e}")
+        log.error("event=node_deregister_failed node=%s error=%s", node_id, e)
 
 
 def watch_ring(ring) -> None:
@@ -93,12 +93,17 @@ def watch_ring(ring) -> None:
                         live_nodes.add(node_id)
                     else:
                         # Stale heartbeat - mark node as down
-                        log.warning(f"Stale heartbeat for {node_id}: "
-                                   f"{current_time - heartbeat_time:.1f}s old (timeout: {HEARTBEAT_TIMEOUT_SECS}s)")
+                        age = current_time - heartbeat_time
+                        log.warning(
+                            "event=heartbeat_stale node=%s age_s=%.1f timeout_s=%s",
+                            node_id,
+                            age,
+                            HEARTBEAT_TIMEOUT_SECS,
+                        )
                         on_node_down(node_id, ring)
                         
                 except (ValueError, AttributeError) as e:
-                    log.debug(f"Failed to parse heartbeat: {e}")
+                    log.debug("event=heartbeat_parse_failed error=%s", e)
                     continue
 
             # Check for nodes registered but missing heartbeats
@@ -109,7 +114,7 @@ def watch_ring(ring) -> None:
             time.sleep(HEARTBEAT_INTERVAL_SECS)
 
         except Exception as e:
-            log.error(f"Error in health monitor: {e}")
+            log.error("event=health_watch_failed error=%s retry_in=5s", e)
             time.sleep(5)
 
 
@@ -144,7 +149,7 @@ class HealthMonitor:
 
     def start(self) -> None:
         """Start heartbeat and watch threads."""
-        log.info(f"Starting health monitor for {self.node_id}")
+        log.info("event=health_monitor_start node=%s interval_s=%s timeout_s=%s", self.node_id, HEARTBEAT_INTERVAL_SECS, HEARTBEAT_TIMEOUT_SECS)
 
         self._heartbeat_thread = threading.Thread(
             target=run_heartbeat,
@@ -164,4 +169,4 @@ class HealthMonitor:
 
     def stop(self) -> None:
         """Stop monitoring (threads are daemons, so they exit with the process)."""
-        log.info("Stopping health monitor")
+        log.info("event=health_monitor_stop node=%s", self.node_id)

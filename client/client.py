@@ -602,6 +602,26 @@ class NearestServerDiscovery:
         """Return the currently selected primary server."""
         return self.primary
 
+    def _detach_rpc_result(self, value):
+        """
+        Convert RPyC netref containers into local Python containers.
+
+        Why this matters: if we close the connection first, lazy netref access
+        (e.g. result["balance"]) will fail with "stream has been closed".
+        """
+        if isinstance(value, dict):
+            return {
+                self._detach_rpc_result(k): self._detach_rpc_result(v)
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [self._detach_rpc_result(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._detach_rpc_result(v) for v in value)
+        if isinstance(value, set):
+            return {self._detach_rpc_result(v) for v in value}
+        return value
+
     def execute_with_fallback(self, rpc_callable: Callable) -> any:
         """
         Execute an RPC call on the best server, with automatic fallback.
@@ -621,26 +641,46 @@ class NearestServerDiscovery:
             raise NodeUnreachableError("Discovery not yet complete")
 
         for attempt, server in enumerate(self.routes + [self.primary]):
+            conn = None
             try:
                 t0 = time.perf_counter()
                 conn = rpyc.connect(server["ip"], server["port"])
                 result = rpc_callable(conn)
                 rtt = (time.perf_counter() - t0) * 1000
 
+                # Materialize remote values before connection teardown.
+                # Use remote JSON serialization to avoid pickle (disabled).
+                try:
+                    result = json.loads(conn.modules.json.dumps(result))
+                except Exception:
+                    result = self._detach_rpc_result(result)
+
                 self.update_ewma(server["node_id"], rtt)
                 self.maybe_reroute()
-
-                conn.close()
                 return result
 
             except Exception as e:
-                log.warning(f"Server {server['node_id']} failed: {e}. Trying next...")
+                log.warning(
+                    "RPC failed on attempt %d/%d via %s (%s:%s): %s",
+                    attempt + 1,
+                    len(self.routes) + 1,
+                    server.get("node_id"),
+                    server.get("ip"),
+                    server.get("port"),
+                    e,
+                )
 
                 if attempt == len(self.routes):  # Last server
                     raise NodeUnreachableError(
                         f"All {len(self.routes) + 1} servers unreachable. "
                         f"Check your network connection."
                     )
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
     # ────────────────────────────────────────────────────────────────
     # STARTUP

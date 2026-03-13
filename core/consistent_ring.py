@@ -96,7 +96,7 @@ class NodeRing:
                 )
                 # Test the connection
                 self.etcd.status()
-                log.info(f"Connected to etcd at {self.etcd_host}:{self.etcd_port}")
+                log.info("event=etcd_connected host=%s port=%s", self.etcd_host, self.etcd_port)
                 return
             except Exception as e:
                 if attempt == max_retries - 1:
@@ -106,7 +106,13 @@ class NodeRing:
                     )
                 # Exponential backoff: 0.5s, 1s, 2s, 4s, etc., max 10s
                 delay = min(base_delay * (2 ** attempt), 10)
-                log.warning(f"etcd connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {delay:.1f}s...")
+                log.warning(
+                    "event=etcd_connect_failed attempt=%s max_attempts=%s retry_in_s=%.1f error=%s",
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                    e,
+                )
                 time.sleep(delay)
 
     def _hash_point(self, key: str) -> int:
@@ -137,7 +143,7 @@ class NodeRing:
             node_info: Dict with at least {"ip": ..., "port": ...}
         """
         if node_id in self.nodes:
-            log.warning(f"Node {node_id} already registered, updating")
+            log.warning("event=node_register_update node=%s", node_id)
 
         self.nodes[node_id] = node_info
 
@@ -151,9 +157,9 @@ class NodeRing:
         etcd_key = f"/{self.cluster_name}/nodes/{node_id}"
         try:
             self.etcd.put(etcd_key, json_encode(node_info))
-            log.info(f"Registered node {node_id} at {node_info['ip']}:{node_info['port']}")
+            log.info("event=node_registered node=%s ip=%s port=%s", node_id, node_info.get("ip"), node_info.get("port"))
         except Exception as e:
-            log.error(f"Failed to register node {node_id} in etcd: {e}")
+            log.error("event=node_register_failed node=%s error=%s", node_id, e)
             raise DiscoveryError(f"Failed to register node: {e}")
 
     def deregister_node(self, node_id: str) -> None:
@@ -167,7 +173,7 @@ class NodeRing:
             node_id: Server ID to remove
         """
         if node_id not in self.nodes:
-            log.warning(f"Node {node_id} not found")
+            log.warning("event=node_deregister_missing node=%s", node_id)
             return
 
         # Remove from etcd
@@ -175,7 +181,7 @@ class NodeRing:
         try:
             self.etcd.delete(etcd_key)
         except Exception as e:
-            log.error(f"Failed to deregister node {node_id} from etcd: {e}")
+            log.error("event=node_deregister_etcd_failed node=%s error=%s", node_id, e)
 
         # Remove virtual nodes from ring
         hash_points_to_remove = [
@@ -186,7 +192,7 @@ class NodeRing:
 
         # Remove from local node list
         del self.nodes[node_id]
-        log.info(f"Deregistered node {node_id}")
+        log.info("event=node_deregistered node=%s", node_id)
 
     def find_owner(self, account_id: str) -> dict:
         """
@@ -284,10 +290,13 @@ class NodeRing:
                         hash_point = self._hash_point(virtual_key)
                         self.ring_points[hash_point] = node_id
 
-            log.info(f"Synced ring: {len(self.nodes)} nodes, "
-                    f"{len(self.ring_points)} virtual points")
+            log.info(
+                "event=ring_synced nodes=%s virtual_points=%s",
+                len(self.nodes),
+                len(self.ring_points),
+            )
         except Exception as e:
-            log.error(f"Failed to sync ring from etcd: {e}")
+            log.error("event=ring_sync_failed error=%s", e)
 
     def watch_changes(self, on_add=None, on_remove=None) -> None:
         """
@@ -327,27 +336,27 @@ class NodeRing:
                 # Detect joins (new nodes)
                 for node_id in current_nodes - prev_nodes:
                     node_info = self.nodes[node_id]
-                    log.info(f"New node joined: {node_id}")
+                    log.info("event=node_joined node=%s", node_id)
                     for callback in self._change_callbacks["added"]:
                         try:
                             callback(node_info)
                         except Exception as e:
-                            log.error(f"Error in on_add callback: {e}")
+                            log.error("event=ring_on_add_callback_failed node=%s error=%s", node_id, e)
 
                 # Detect leaves (removed nodes)
                 for node_id in prev_nodes - current_nodes:
-                    log.info(f"Node left: {node_id}")
+                    log.info("event=node_left node=%s", node_id)
                     for callback in self._change_callbacks["removed"]:
                         try:
                             callback(node_id)
                         except Exception as e:
-                            log.error(f"Error in on_remove callback: {e}")
+                            log.error("event=ring_on_remove_callback_failed node=%s error=%s", node_id, e)
 
                 prev_nodes = current_nodes
                 threading.Event().wait(5)  # Check every 5 seconds
 
             except Exception as e:
-                log.error(f"Error in etcd watch loop: {e}")
+                log.error("event=ring_watch_failed error=%s retry_in=5s", e)
                 threading.Event().wait(5)
 
 

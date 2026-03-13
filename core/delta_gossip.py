@@ -96,7 +96,7 @@ class DeltaGossipService:
     def start(self) -> None:
         """Start background gossip and anti-entropy threads."""
         if self._gossip_thread is not None:
-            log.warning("Gossip service already running")
+            log.warning("event=gossip_start_skipped node=%s reason=already_running", self.local_node_id)
             return
 
         self._stop_event.clear()
@@ -114,11 +114,17 @@ class DeltaGossipService:
         )
         self._anti_entropy_thread.start()
 
-        log.info(f"Gossip service started for {self.local_node_id}")
+        log.info(
+            "event=gossip_started node=%s interval_s=%s peers_per_round=%s anti_entropy_s=%s",
+            self.local_node_id,
+            GOSSIP_INTERVAL_SECS,
+            GOSSIP_PEERS,
+            ANTI_ENTROPY_INTERVAL_SECS,
+        )
 
     def stop(self) -> None:
         """Stop all gossip activity and wait for threads to finish."""
-        log.info(f"Stopping gossip service for {self.local_node_id}")
+        log.info("event=gossip_stopping node=%s", self.local_node_id)
         self._stop_event.set()
 
         if self._gossip_thread:
@@ -135,7 +141,7 @@ class DeltaGossipService:
             try:
                 self._gossip_round()
             except Exception as e:
-                log.error(f"Error in gossip round: {e}")
+                log.error("event=gossip_round_failed node=%s error=%s", self.local_node_id, e)
 
             # Sleep in small increments so stop() responds quickly
             for _ in range(int(GOSSIP_INTERVAL_SECS * 10)):
@@ -155,6 +161,8 @@ class DeltaGossipService:
 
             # Select random peers to gossip with (at most GOSSIP_PEERS)
             selected = random.sample(peers, min(len(peers), GOSSIP_PEERS))
+            sent_accounts = 0
+            sent_messages = 0
 
             # For each account, get its delta
             for account_id in self.store.list_accounts():
@@ -168,11 +176,13 @@ class DeltaGossipService:
                         try:
                             payload = self._prepare_payload(account_id, delta)
                             peer_conn.root.receive_delta(payload)
+                            sent_messages += 1
                         except Exception as e:
-                            log.debug(f"Failed to send delta to peer: {e}")
+                            log.debug("event=gossip_send_delta_failed node=%s account=%s error=%s", self.local_node_id, account_id, e)
+                    sent_accounts += 1
 
                 except Exception as e:
-                    log.debug(f"Error getting delta for {account_id}: {e}")
+                    log.debug("event=gossip_get_delta_failed node=%s account=%s error=%s", self.local_node_id, account_id, e)
 
             for peer_conn in peers:
                 try:
@@ -180,8 +190,17 @@ class DeltaGossipService:
                 except Exception:
                     pass
 
+            if sent_accounts:
+                log.debug(
+                    "event=gossip_round_done node=%s peers=%s accounts=%s messages=%s",
+                    self.local_node_id,
+                    len(selected),
+                    sent_accounts,
+                    sent_messages,
+                )
+
         except Exception as e:
-            log.error(f"Gossip round failed: {e}")
+            log.error("event=gossip_round_crash node=%s error=%s", self.local_node_id, e)
 
     def _anti_entropy_loop(self) -> None:
         """
@@ -197,7 +216,7 @@ class DeltaGossipService:
                 self._anti_entropy_round()
 
             except Exception as e:
-                log.error(f"Error in anti-entropy round: {e}")
+                log.error("event=anti_entropy_loop_failed node=%s error=%s", self.local_node_id, e)
 
     def _anti_entropy_round(self) -> None:
         """Send full state snapshot to one random peer."""
@@ -221,9 +240,14 @@ class DeltaGossipService:
             payload = self._compress(json.dumps(full_state))
             try:
                 peer_conn.root.receive_full_state(payload)
-                log.debug(f"Sent anti-entropy update to peer (size: {len(payload)} bytes)")
+                log.debug(
+                    "event=anti_entropy_sent node=%s accounts=%s bytes=%s",
+                    self.local_node_id,
+                    len(full_state),
+                    len(payload),
+                )
             except Exception as e:
-                log.debug(f"Anti-entropy send failed: {e}")
+                log.debug("event=anti_entropy_send_failed node=%s error=%s", self.local_node_id, e)
             finally:
                 try:
                     peer_conn.close()
@@ -231,7 +255,7 @@ class DeltaGossipService:
                     pass
 
         except Exception as e:
-            log.error(f"Anti-entropy round failed: {e}")
+            log.error("event=anti_entropy_round_failed node=%s error=%s", self.local_node_id, e)
 
     def _prepare_payload(self, account_id: str, delta: dict) -> bytes:
         """
@@ -302,7 +326,7 @@ class DeltaGossipService:
             delta = message.get("delta")
 
             if not account_id or not delta:
-                log.warning(f"Malformed delta message: {message}")
+                log.warning("event=delta_malformed node=%s payload_keys=%s", self.local_node_id, list(message.keys()) if isinstance(message, dict) else "invalid")
                 return
 
             # Load local state and merge
@@ -315,10 +339,15 @@ class DeltaGossipService:
                 local_account.merge_delta(delta)
                 self.store.put(account_id, local_account)
 
-            log.debug(f"Merged delta for {account_id} from {message.get('source_node')}")
+            log.debug(
+                "event=delta_merged node=%s account=%s source=%s",
+                self.local_node_id,
+                account_id,
+                message.get("source_node"),
+            )
 
         except Exception as e:
-            log.error(f"Error processing received delta: {e}")
+            log.error("event=delta_merge_failed node=%s error=%s", self.local_node_id, e)
             raise SyncError(f"Failed to merge delta: {e}")
 
     def receive_full_state(self, payload: bytes) -> None:
@@ -343,8 +372,8 @@ class DeltaGossipService:
                     new_account.merge_full(account_data)
                     self.store.put(account_id, new_account)
 
-            log.debug(f"Merged anti-entropy snapshot ({len(full_state_dict)} accounts)")
+            log.debug("event=anti_entropy_merged node=%s accounts=%s", self.local_node_id, len(full_state_dict))
 
         except Exception as e:
-            log.error(f"Error processing full state: {e}")
+            log.error("event=anti_entropy_merge_failed node=%s error=%s", self.local_node_id, e)
             raise SyncError(f"Failed to merge full state: {e}")

@@ -91,7 +91,7 @@ class AuthService:
         }
 
         token = jwt.encode(payload, self.secret_key, algorithm=JWT_ALGORITHM)
-        log.info(f"Issued token for {subject} (role={role}, expires in {expiry_minutes}m)")
+        log.info("event=token_issued subject=%s role=%s ttl_min=%s", subject, role, expiry_minutes)
         return token
 
     def verify_token(self, token_str: str) -> dict:
@@ -189,7 +189,7 @@ class AuthService:
             # Optional: set strong cipher suites (for security)
             # context.set_ciphers("HIGH:!aNULL:!MD5")
 
-            log.info(f"SSL context created with cert={cert_file}, ca={ca_cert_file}")
+            log.info("event=ssl_context_created cert=%s ca=%s", cert_file, ca_cert_file)
             return context
 
         except FileNotFoundError as e:
