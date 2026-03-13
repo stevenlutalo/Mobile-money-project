@@ -122,6 +122,17 @@ class SecureNodeService(rpyc.Service):
             AuthError: if token is invalid
         """
         self._verify_token(token)
+        return self._route_to_owner_or_local(
+            account_id,
+            "exposed_get_balance_local",
+            token,
+            account_id,
+            fallback=lambda: self.exposed_get_balance_local(token, account_id),
+        )
+
+    def exposed_get_balance_local(self, token: str, account_id: str) -> float:
+        """Return local balance without owner routing (used for forwarded calls)."""
+        self._verify_token(token)
         account = self.store.get(account_id)
         if account is None:
             return 0.0
@@ -151,6 +162,26 @@ class SecureNodeService(rpyc.Service):
             AuthError: if token invalid
             InsufficientFundsError: if source account doesn't have enough money
         """
+        self._verify_token(token)
+        # Route transfer to source-account owner to serialize debits consistently.
+        return self._route_to_owner_or_local(
+            from_account,
+            "exposed_transfer_local",
+            token,
+            from_account,
+            to_account,
+            amount,
+            fallback=lambda: self.exposed_transfer_local(token, from_account, to_account, amount),
+        )
+
+    def exposed_transfer_local(
+        self,
+        token: str,
+        from_account: str,
+        to_account: str,
+        amount: float,
+    ) -> dict:
+        """Execute transfer locally without owner routing (used for forwarded calls)."""
         claims = self._verify_token(token)
         user_id = claims["sub"]
 
@@ -177,16 +208,16 @@ class SecureNodeService(rpyc.Service):
         # Log transaction
         self.audit_log.append(
             from_account, "debit", amount,
-            f"{from_account}→{to_account} transfer",
+            f"{from_account}->{to_account} transfer",
             user_id
         )
         self.audit_log.append(
             to_account, "credit", amount,
-            f"{from_account}→{to_account} transfer",
+            f"{from_account}->{to_account} transfer",
             user_id
         )
 
-        log.info(f"Transfer: {from_account} → {to_account}, amount={amount}")
+        log.info(f"Transfer: {from_account} -> {to_account}, amount={amount}")
 
         return {
             "status": "ok",
@@ -214,6 +245,23 @@ class SecureNodeService(rpyc.Service):
         Raises:
             AuthError: if token invalid
         """
+        self._verify_token(token)
+        return self._route_to_owner_or_local(
+            account_id,
+            "exposed_create_account_local",
+            token,
+            account_id,
+            initial_deposit,
+            fallback=lambda: self.exposed_create_account_local(token, account_id, initial_deposit),
+        )
+
+    def exposed_create_account_local(
+        self,
+        token: str,
+        account_id: str,
+        initial_deposit: float,
+    ) -> dict:
+        """Create account locally without owner routing (used for forwarded calls)."""
         claims = self._verify_token(token)
         user_id = claims["sub"]
 
@@ -222,7 +270,7 @@ class SecureNodeService(rpyc.Service):
 
         self.audit_log.append(
             account_id, "create", initial_deposit,
-            f"Account created",
+            "Account created",
             user_id
         )
 
@@ -308,13 +356,46 @@ class SecureNodeService(rpyc.Service):
         except Exception as e:
             raise AuthError(f"Token verification failed: {e}")
 
+    def _route_to_owner_or_local(self, account_id: str, method_name: str, *args, fallback):
+        """Forward account-scoped RPCs to the owning node, or execute locally."""
+        owner = self.ring.find_owner(account_id)
+        owner_id = owner.get("node_id")
 
-def get_peers_for_gossip():
+        if owner_id == NODE_ID:
+            return fallback()
+
+        conn = None
+        try:
+            conn = rpyc.connect(owner["ip"], owner["port"])
+            remote_method = getattr(conn.root, method_name)
+            return remote_method(*args)
+        except Exception as e:
+            log.warning(
+                f"Owner routing failed for account {account_id} to {owner_id}: {e}. Falling back to local."
+            )
+            return fallback()
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+
+def get_peers_for_gossip(ring: NodeRing):
     """
     Get list of peer server connections for gossip.
-    Returns empty in this basic implementation (gossip not fully wired).
+    Returns active RPyC connections to all nodes except this one.
     """
-    return []
+    peers = []
+    for node_id, node_info in ring.nodes.items():
+        if node_id == NODE_ID:
+            continue
+        try:
+            peers.append(rpyc.connect(node_info["ip"], node_info["port"]))
+        except Exception as e:
+            log.debug(f"Failed to connect to gossip peer {node_id}: {e}")
+    return peers
 
 
 def main():
@@ -348,7 +429,7 @@ def main():
         gossip_service = DeltaGossipService(
             local_node_id=NODE_ID,
             store=store,
-            get_peers=get_peers_for_gossip,
+            get_peers=lambda: get_peers_for_gossip(ring),
             on_receive=lambda aid, delta: store.get(aid).merge_delta(delta) if store.get(aid) else None,
         )
         gossip_service.start()

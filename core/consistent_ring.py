@@ -265,6 +265,8 @@ class NodeRing:
         Called on startup and when topology changes.
         """
         try:
+            self.nodes = {}
+            self.ring_points = {}
             etcd_prefix = f"/{self.cluster_name}/nodes/"
             for value, metadata in self.etcd.get_prefix(etcd_prefix):
                 if value:

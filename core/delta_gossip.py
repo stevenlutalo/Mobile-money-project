@@ -11,6 +11,7 @@ from typing import Dict, Callable
 # (none)
 
 # — This project —
+from core.crdt import PNCounter
 from core.exceptions import SyncError
 
 log = logging.getLogger(__name__)
@@ -173,6 +174,12 @@ class DeltaGossipService:
                 except Exception as e:
                     log.debug(f"Error getting delta for {account_id}: {e}")
 
+            for peer_conn in peers:
+                try:
+                    peer_conn.close()
+                except Exception:
+                    pass
+
         except Exception as e:
             log.error(f"Gossip round failed: {e}")
 
@@ -217,6 +224,11 @@ class DeltaGossipService:
                 log.debug(f"Sent anti-entropy update to peer (size: {len(payload)} bytes)")
             except Exception as e:
                 log.debug(f"Anti-entropy send failed: {e}")
+            finally:
+                try:
+                    peer_conn.close()
+                except Exception:
+                    pass
 
         except Exception as e:
             log.error(f"Anti-entropy round failed: {e}")
@@ -297,8 +309,11 @@ class DeltaGossipService:
             local_account = self.store.get(account_id)
             if local_account:
                 local_account.merge_delta(delta)
+                self.store.put(account_id, local_account)
             else:
-                log.warning(f"Received delta for unknown account {account_id}")
+                local_account = PNCounter(self.local_node_id)
+                local_account.merge_delta(delta)
+                self.store.put(account_id, local_account)
 
             log.debug(f"Merged delta for {account_id} from {message.get('source_node')}")
 
@@ -324,7 +339,9 @@ class DeltaGossipService:
                     local_account.merge_full(account_data)
                     self.store.put(account_id, local_account)
                 else:
-                    log.debug(f"Received full state for new account {account_id}")
+                    new_account = PNCounter(self.local_node_id)
+                    new_account.merge_full(account_data)
+                    self.store.put(account_id, new_account)
 
             log.debug(f"Merged anti-entropy snapshot ({len(full_state_dict)} accounts)")
 
